@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IndexedDB TodoList Performance</title>
+</head>
+<body>
+    <h1>IndexedDB TodoList Performance</h1>
+    <button onclick="initializeDB()">Initialize DB</button>
+    <button onclick="readCompletedTasks()">Read Completed Tasks</button>
+    <button onclick="readCompletedTasksReadOnly()">Read Completed Tasks (Read-Only)</button>
+    <button onclick="readCompletedTasksWithIndex()">Read Completed Tasks (With Index)</button>
+    <button onclick="createTodoListCompleted()">Create TodoListCompleted and Read</button>
+    <div id="output"></div>
+
+    <script>
+        let db;
+
+        // Initialize the IndexedDB and create the TodoList object store
+        function initializeDB() {
+            const request = indexedDB.open("TodoApp", 1);
+
+            request.onupgradeneeded = function(event) {
+                db = event.target.result;
+                const todoStore = db.createObjectStore("TodoList", { keyPath: "id" });
+                todoStore.createIndex("status", "status", { unique: false });
+
+                // Populate with 100,000 random tasks
+                todoStore.transaction.oncomplete = function() {
+                    const todoObjectStore = db.transaction("TodoList", "readwrite").objectStore("TodoList");
+                    for (let i = 1; i <= 100000; i++) {
+                        todoObjectStore.add({
+                            id: i,
+                            task: `Task ${i}`,
+                            status: i <= 1000 ? "completed" : "in progress",
+                            dueDate: `2024-09-${Math.floor(Math.random() * 30) + 1}`
+                        });
+                    }
+                    document.getElementById("output").innerText = "Database initialized and populated with tasks.";
+                };
+            };
+
+            request.onsuccess = function(event) {
+                db = event.target.result;
+            };
+        }
+
+        // Function to read all completed tasks and measure time
+        function readCompletedTasks() {
+            const start = performance.now();
+            const transaction = db.transaction(["TodoList"], "readonly");
+            const objectStore = transaction.objectStore("TodoList");
+            const request = objectStore.getAll();
+
+            request.onsuccess = function(event) {
+                const completedTasks = event.target.result.filter(task => task.status === "completed");
+                const end = performance.now();
+                document.getElementById("output").innerText = `Time to read completed tasks: ${end - start} ms`;
+            };
+        }
+
+        // Function to read all completed tasks with read-only flag
+        function readCompletedTasksReadOnly() {
+            const start = performance.now();
+            const transaction = db.transaction(["TodoList"], "readonly");
+            const objectStore = transaction.objectStore("TodoList");
+            const request = objectStore.getAll();
+
+            request.onsuccess = function(event) {
+                const completedTasks = event.target.result.filter(task => task.status === "completed");
+                const end = performance.now();
+                document.getElementById("output").innerText = `Time with read-only flag: ${end - start} ms`;
+            };
+        }
+
+        // Function to read completed tasks using the status index
+        function readCompletedTasksWithIndex() {
+            const start = performance.now();
+            const transaction = db.transaction(["TodoList"], "readonly");
+            const objectStore = transaction.objectStore("TodoList");
+            const index = objectStore.index("status");
+            const request = index.getAll("completed");
+
+            request.onsuccess = function(event) {
+                const completedTasks = event.target.result;
+                const end = performance.now();
+                document.getElementById("output").innerText = `Time with status index: ${end - start} ms`;
+            };
+        }
+
+        // Create a new object store "TodoListCompleted" and copy completed tasks into it
+        function createTodoListCompleted() {
+            const newDBRequest = indexedDB.open("TodoApp", 2);
+
+            newDBRequest.onupgradeneeded = function(event) {
+                db = event.target.result;
+                if (!db.objectStoreNames.contains("TodoListCompleted")) {
+                    const completedStore = db.createObjectStore("TodoListCompleted", { keyPath: "id" });
+                    document.getElementById("output").innerText = "TodoListCompleted store created.";
+                }
+            };
+
+            newDBRequest.onsuccess = function(event) {
+                db = event.target.result;
+                const transaction = db.transaction(["TodoList", "TodoListCompleted"], "readwrite");
+                const todoStore = transaction.objectStore("TodoList");
+                const completedStore = transaction.objectStore("TodoListCompleted");
+                const index = todoStore.index("status");
+
+                index.getAll("completed").onsuccess = function(event) {
+                    const completedTasks = event.target.result;
+                    completedTasks.forEach(task => {
+                        completedStore.add(task);
+                    });
+
+                    // Measure time to read from the new store
+                    const start = performance.now();
+                    const completedReadTransaction = db.transaction(["TodoListCompleted"], "readonly");
+                    const completedReadStore = completedReadTransaction.objectStore("TodoListCompleted");
+                    const request = completedReadStore.getAll();
+
+                    request.onsuccess = function(event) {
+                        const end = performance.now();
+                        document.getElementById("output").innerText = `Time from TodoListCompleted store: ${end - start} ms`;
+                    };
+                };
+            };
+        }
+    </script>
+</body>
+</html>
